@@ -3,9 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.responses import FileResponse, JSONResponse
+from dotenv import load_dotenv
 import os
 import uuid
+from ibm_watsonx_ai.foundation_models import Model
+from ibm_watsonx_ai import Credentials
 
+load_dotenv()
 
 app = FastAPI()
 
@@ -27,12 +31,16 @@ class ExportRequest(BaseModel):
     clause_text: str
     export_type: str  # 'word' or 'pdf'
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+WATSONX_API_KEY = os.getenv("WATSONX_API_KEY")
+WATSONX_PROJECT_ID = os.getenv("WATSONX_PROJECT_ID")
+WATSONX_URL = os.getenv("WATSONX_URL")
 
 @app.post("/generate-clause")
 async def generate_clause(req: ClauseRequest):
-    if not OPENAI_API_KEY:
-        return JSONResponse(status_code=500, content={"error": "OpenAI API key not set in environment."})
+    if not WATSONX_API_KEY or not WATSONX_PROJECT_ID or not WATSONX_URL:
+        return JSONResponse(status_code=500, content={"error": "WatsonX credentials not set in environment."})
+
     prompt_parts = [
         f"You are a legal expert. Write a {req.clause_type} clause for a contract.",
         f"Prompt: {req.prompt}",
@@ -42,15 +50,12 @@ async def generate_clause(req: ClauseRequest):
             if ex.strip():
                 prompt_parts.append(f"Example {i}: {ex}")
     prompt_text = "\n".join(prompt_parts)
+
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt_text}],
-            max_tokens=512,
-            temperature=0.3,
-            api_key=OPENAI_API_KEY
-        )
-        clause = response.choices[0].message['content'].strip()
+        creds = Credentials(api_key=WATSONX_API_KEY, url=WATSONX_URL, project_id=WATSONX_PROJECT_ID)
+        model = Model("ibm/granite-3-3-8b-instruct", credentials=creds)
+        response = model.generate(prompt=prompt_text, max_new_tokens=512, temperature=0.3)
+        clause = response['results'][0]['generated_text'].strip()
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
     return {"clause": clause}
